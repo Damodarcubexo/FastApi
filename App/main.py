@@ -12,8 +12,8 @@ import random
 from fastapi import APIRouter, Depends
 from . import authentication
 from typing import List
-from . import role_and_perms
 from fastapi import HTTPException
+from .import schema
 app = FastAPI()
 
 database.Base.metadata.create_all(bind=database.engine)
@@ -21,47 +21,46 @@ database.Base.metadata.create_all(bind=database.engine)
 
 router = APIRouter()
 
-@app.get("/protected")
-async def protected_endpoint(user_roles: List[role_and_perms.Role] = Depends(authentication.get_user_roles)):
-    if not role_and_perms.has_permission(user_roles, role_and_perms.Permission.read):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-    return {"message": "You have access to this protected endpoint!"}
-
-
-@app.post("/users")
+@app.post("/users", response_model=User)
 async def create_user(user: auth_token.User):
     db = database.SessionLocal()
     db_user = get_user_by_email(db, name=user.name)
-    if db_user.otp==None:
+    if db_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User with this Name already registered",
         )
     otp = str(random.randint(100000, 999999))
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    message = client.messages.create(
-        body=f'Your OTP is: {otp}',
-        from_=TWILIO_PHONE_NUMBER,
-        to=user.phone_number
-    )
+    # client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    # message = client.messages.create(
+    #     body=f'Your OTP is: {otp}',
+    #     from_=TWILIO_PHONE_NUMBER,
+    #     to=user.phone_number
+    # )
     db_user = User(name=user.name,email=user.email,password=user.password, phone_number=user.phone_number, otp= otp)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return {
-        "message": message.__dict__['body']+" "+"Please enter this otp to activate your account",
+        # "message": message.__dict__['body']+" "+"Please enter thcreate_engineis otp to activate your account",
         "user_id": db_user.id,
         "status_code": status.HTTP_201_CREATED,
     }
 
 @app.get("/users/{user_id}")
-async def read_user(user_id: int):
+async def read_user(user_id: int,user_roles: List[schema.UserRole] = Depends(authentication.get_user_roles)):
     db = database.SessionLocal()
-    db_user = db.query(User).filter(User.id == user_id).first()
-    if db_user:
-        return {"id": db_user.id, "name": db_user.name, "email": db_user.email}
+    if user_roles =='admin':
+        db_user = db.query(User).filter(User.id == user_id).first()
+        if db_user:
+            return {"id": db_user.id, "name": db_user.name, "email": db_user.email}
+        else:
+            return {"message": "User not found"}
     else:
-        return {"message": "User not found"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You are not authorise to access this route!!",
+        )
 
 
 @app.put("/users/{user_id}")
@@ -95,7 +94,7 @@ async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ):
     db = database.SessionLocal()
-    user = auth_token.authenticate_user(db, form_data.name, form_data.password)
+    user = auth_token.authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -104,7 +103,7 @@ async def login_for_access_token(
         )
     access_token_expires = timedelta(minutes=auth_token.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth_token.create_access_token(
-        data={"sub": user.name}, expires_delta=access_token_expires
+        data={"sub": user.name, "role":schema.UserRole}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 

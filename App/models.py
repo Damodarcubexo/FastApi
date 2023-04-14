@@ -1,5 +1,6 @@
 from .database import Base
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Enum
+from .schema import UserRole
 
 
 class User(Base):
@@ -9,6 +10,6 @@ class User(Base):
     name = Column(String)
     email = Column(String)
     password = Column(String)
-    
+    role = Column(Enum(UserRole, name= 'role'), default=UserRole.user)
     phone_number = Column(String)
     otp = Column(String, nullable=True)
